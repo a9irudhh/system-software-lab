@@ -108,7 +108,7 @@ int passOne(FILE *input_file, FILE *intermediate_file)
             else if (operand[0] == 'C')
                 LOCCTR += strlen(operand) - 3; // Subrtact 1 each for the character C, and the two quote marks.
         }
-        else if (strcmp(mnemonic, "BASE") == 0)
+        else if (strcmp(mnemonic, "BASE") == 0 || strcmp(mnemonic, "LTORG") == 0)
         {
             fscanf(input_file, "%s\t%s\t%s\n", label, mnemonic, operand);
             continue;

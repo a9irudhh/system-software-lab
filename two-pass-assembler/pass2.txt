@@ -1,0 +1,38 @@
+Pass 2:
+begin:
+    read first input line (from intermediate file)
+    if opcode = start then
+        write listing line
+        read next input line
+    
+    write header record to object program
+    initialize first text record
+    while opcode != END
+        search OPTAB for opcode 
+        if found then  
+            if there is symbol in the operand field then
+                search SYMTAB for operand
+                if found then   
+                    store symbol value as operand address
+                else
+                    store 0 as operand address
+                    set error flag (Undefined Symbol)
+            else
+                store 0 as operand address
+            assemble the object code instruction 
+        else if opcode = 'BYTE' or 'WORD' then
+            convert constant to object code
+        
+        if object code will not fit into the current Text Record then
+            write Text Record to the Object program
+            initialize new Text Record
+        add object code to Text Record 
+
+        write listing line 
+        read next input line
+    
+    write last Text Record to the Object program
+    Write End Record to object program
+    write last listing line
+end {Pass 2}
+        

@@ -7,11 +7,13 @@
 int passTwo(FILE *, FILE *, FILE *);
 
 unsigned long long int assemble_instruction(char *, char *, int);
-// hardest. Need to use some creativity.
 void get_literal_value(char *, char *);
 unsigned long long int get_string_literal_hex(char *);
 int get_object_code_length(unsigned long long int);
 void update_text_record_length(FILE *, int);
+void add_literal_to_table(char *);
+void process_literals(int *, FILE *, FILE *);
+void write_literals_to_file(const char *);
 
 int increment_pc();
 void init_pc_file();
@@ -19,6 +21,19 @@ void init_pc_file();
 FILE *PROGRAM_COUNTER_FILE;
 int PROGRAM_COUNTER;
 int BASE = 0;
+
+#define MAX_LITERALS 100
+
+typedef struct {
+    char literal[MAX_TOKEN_LENGTH];
+    int address;
+    int resolved;
+} Literal;
+
+Literal LITTAB[MAX_LITERALS];
+int literal_count = 0;
+
+
 
 int main()
 {
@@ -84,30 +99,35 @@ int passTwo(FILE *input_file, FILE *object_program, FILE *assembly_listing)
     unsigned long long int assembled_object_code = 0;
     init_pc_file();
 
-    while (fscanf(input_file, "%x\t%s\t%s\t%s", &location, label, mnemonic, operand) > 0)
+        while (fscanf(input_file, "%x\t%s\t%s\t%s", &location, label, mnemonic, operand) > 0)
     {
         increment_pc();
-        // No comments in intermediate file.
-        if (opcode_search(mnemonic))
-        {
+        
+        // Handle literals and end of program
+        if (strcmp(mnemonic, "LTORG") == 0 || strcmp(mnemonic, "END") == 0) {
+            process_literals(&location, assembly_listing, temp_text_record);
+            if (strcmp(mnemonic, "END") == 0) {
+                break;
+            }
+            continue;
+        }
+
+        // Process regular instructions
+        if (opcode_search(mnemonic)) {
             int symbol_address = 0;
-            if (strcmp(operand, EMPTY) != 0)
-            {
+            if (strcmp(operand, EMPTY) != 0) {
                 // If instruction is format 2, then operand will be registers.
-                if (opcode_instruction_format(mnemonic) != 2 && symbol_search(operand))
+                if (opcode_instruction_format(mnemonic) != 2 && symbol_search(operand)) {
                     symbol_address = symbol_value(operand);
-                else if (opcode_instruction_format(mnemonic) != 2)
-                {
+                } else if (opcode_instruction_format(mnemonic) != 2) {
                     printf("ERROR: %s doesn't exist in SYMTAB.\n", operand);
                     return ERROR_VALUE;
                 }
             }
 
-            // assemble object code
+            // Assemble object code
             assembled_object_code = assemble_instruction(mnemonic, operand, symbol_address);
-        }
-        else if (strcmp(mnemonic, "BYTE") == 0)
-        {
+        } else if (strcmp(mnemonic, "BYTE") == 0) {
             char operand_without_extraneous[MAX_TOKEN_LENGTH] = "";
             get_literal_value(operand_without_extraneous, operand);
 
@@ -115,41 +135,38 @@ int passTwo(FILE *input_file, FILE *object_program, FILE *assembly_listing)
                 assembled_object_code = strtol(operand_without_extraneous, NULL, 16);
             else if (operand[0] == 'C')
                 assembled_object_code = get_string_literal_hex(operand_without_extraneous);
-            else
-            {
+            else {
                 printf("ERROR: Unknown literal %s\n", operand);
                 return ERROR_VALUE;
             }
-        }
-        else if (strcmp(mnemonic, "WORD") == 0)
+        } else if (strcmp(mnemonic, "WORD") == 0)
             assembled_object_code = (unsigned long long int)strtol(operand, NULL, 16);
-        else if (strcmp(mnemonic, "BASE") == 0)
-        {
+        else if (strcmp(mnemonic, "BASE") == 0) {
             BASE = symbol_value(operand);
             continue;
-        }
-        else if (strcmp(mnemonic, "RESW") == 0 || strcmp(mnemonic, "RESB") == 0)
-        {
+        } else if (strcmp(mnemonic, "RESW") == 0 || strcmp(mnemonic, "RESB") == 0) {
+            // These don't generate object code, just increment PC
             fprintf(assembly_listing, "%04x\t%8s\t%8s\t%8s\n", location, label, mnemonic, operand);
             continue;
         }
 
         int obj_code_length = get_object_code_length(assembled_object_code);
-        if (text_record_length + obj_code_length > 69)
-        {
+
+        // Check if the current text record exceeds the max length (69)
+        if (text_record_length + obj_code_length > 69) {
+            // Write the current text record to file and update length
             fprintf(temp_text_record, "\n");
             update_text_record_length(temp_text_record, text_record_length);
 
-            // Start new text_record.
+            // Start a new text record
             text_record_length = obj_code_length;
             text_record_start_address = location;
             fprintf(temp_text_record, "%c%06x%02x", 'T', text_record_start_address, text_record_length);
-        }
-        else
+        } else {
             text_record_length += obj_code_length;
+        }
 
-        // Write the assembled object code.
-        // %0*x is variable padding length, length is obj_code_length.
+        // Write the assembled object code to the text record
         fprintf(temp_text_record, "%0*llx", 2 * obj_code_length, assembled_object_code);
 
         if (strcmp(mnemonic, "END") != 0)
@@ -158,6 +175,7 @@ int passTwo(FILE *input_file, FILE *object_program, FILE *assembly_listing)
             fprintf(assembly_listing, "%4s\t%8s\t%8s\t%8s\n", "****", label, mnemonic, "****");
     }
 
+    // Finalize the last text record
     fprintf(temp_text_record, "\n");
     update_text_record_length(temp_text_record, text_record_length);
 
@@ -173,13 +191,11 @@ int passTwo(FILE *input_file, FILE *object_program, FILE *assembly_listing)
     remove("Temp_text_record.txt");
 
     // Write the end record
-    // This is not really the correct logic
-    // Refer README.md
     fprintf(object_program, "E%06x\n", start_address);
     fclose(PROGRAM_COUNTER_FILE);
 
     printf("Pass 2 of 2 of two completed successfully.\n");
-
+    write_literals_to_file("literals.txt");
     return 1;
 }
 
@@ -340,14 +356,10 @@ unsigned long long int get_string_literal_hex(char operand_without_extraneous[])
     return obj_code;
 }
 
-void get_literal_value(char operand_without_extraneous[], char operand[])
-{
-    // strip the apostropes and the first character
-    // 'C' or 'X' and return the remaining string.
-    // We use strncpy.
-
+void get_literal_value(char operand_without_extraneous[], char operand[]) {
     strncpy(operand_without_extraneous, operand + 2, strlen(operand) - 3);
-    return;
+    operand_without_extraneous[strlen(operand) - 3] = '\0';
+    add_literal_to_table(operand);
 }
 
 void update_text_record_length(FILE *temp_text_record, int text_record_length)
@@ -376,4 +388,59 @@ void update_text_record_length(FILE *temp_text_record, int text_record_length)
     fseek(temp_text_record, 0, SEEK_END);
 
     return;
+}
+
+void add_literal_to_table(char *literal) {
+    for (int i = 0; i < literal_count; i++) {
+        if (strcmp(LITTAB[i].literal, literal) == 0) {
+            return; // Literal already exists
+        }
+    }
+    strcpy(LITTAB[literal_count].literal, literal);
+    LITTAB[literal_count].resolved = 0;
+    literal_count++;
+}
+
+void process_literals(int *location_counter, FILE *assembly_listing, FILE *temp_text_record) {
+    for (int i = 0; i < literal_count; i++) {
+        if (LITTAB[i].resolved == 0) {
+            LITTAB[i].address = *location_counter;
+            LITTAB[i].resolved = 1;
+
+            // Generate object code for the literal
+            unsigned long long int object_code = 0;
+            if (LITTAB[i].literal[0] == 'X') {
+                object_code = strtol(LITTAB[i].literal + 2, NULL, 16);
+            } else if (LITTAB[i].literal[0] == 'C') {
+                object_code = get_string_literal_hex(LITTAB[i].literal + 2);
+            }
+
+            int obj_code_length = get_object_code_length(object_code);
+
+            fprintf(assembly_listing, "%04x\t%8s\t%8s\t%8s\t%0*llx\n", 
+                    *location_counter, "*", "BYTE", LITTAB[i].literal, 2 * obj_code_length, object_code);
+
+            fprintf(temp_text_record, "%0*llx", 2 * obj_code_length, object_code);
+            *location_counter += obj_code_length;
+        }
+    }
+}
+
+
+void write_literals_to_file(const char *filename) {
+    FILE *file = fopen(filename, "w");
+    if (!file) {
+        printf("ERROR: Could not open file %s for writing.\n", filename);
+        return;
+    }
+
+    fprintf(file, "Literal\t\tAddress\tResolved\n");
+    for (int i = 0; i < literal_count; i++) {
+        fprintf(file, "%-10s\t%04x\n",
+                LITTAB[i].literal,
+                LITTAB[i].address);
+    }
+
+    fclose(file);
+    printf("Literals successfully written to %s\n", filename);
 }

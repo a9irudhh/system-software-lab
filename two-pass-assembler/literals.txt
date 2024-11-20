@@ -1,0 +1,2 @@
+Literal		Address	Resolved
+C'BVB_KLETECH'	0000

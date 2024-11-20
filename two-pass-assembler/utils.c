@@ -112,6 +112,10 @@ int opcode_search(char mnemonic[])
             fclose(opcode_table);
             return 1;
         }
+        if (strcmp(mnemonic, "LTORG") == 0 || strcmp(mnemonic, "END") == 0) {
+            return 1; // Recognize it as valid
+        }
+
     }
 
     fclose(opcode_table);
