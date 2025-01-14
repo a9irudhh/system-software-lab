@@ -1,221 +1,275 @@
 #include <stdio.h>
-#include <stdlib.h> // for atoi()
-#include <string.h> // for strcmp()
-#include <ctype.h>  // for isdigit()
-#include "utils.h"
+#include <stdlib.h>
+#include <string.h>
+#define MAX_BUF 256
+#define ESTAB_SIZE 64
+#define MEMORY_SIZE 65536
+#define ERROR_VALUE -1
 
-int symbol_search(char input_symbol[])
+int memory_array[MEMORY_SIZE];
+int memory_array_wom[MEMORY_SIZE];
+
+typedef struct
 {
-    // Returns 0 if symbol not found.
-    // Returns 1 if found.
-    // Also returns 1 if symbol is determined to be an immediate number.
+    char symbol[MAX_BUF];
+    int address;
+} ESTAB;
 
-    FILE *symbol_table = fopen("pass-1-outputs/SYMTAB.txt", "r");
-    char cmp_symbol[MAX_TOKEN_LENGTH];
+int estab_length;
+ESTAB estab[ESTAB_SIZE];
 
-    char symbol[MAX_TOKEN_LENGTH];
-    // Check if operand contains index register.
-    if (input_symbol[strlen(input_symbol) - 1] == 'X')
-    {
-        strncpy(symbol, input_symbol, strlen(input_symbol) - 2);
-        symbol[strlen(input_symbol) - 2] = '\0';
-    }
-    else
-        strcpy(symbol, input_symbol);
+void show_estab();
+void init_estab();
+int ll_pass_two(FILE *object_programs, int PROGADDR);
+void save_to_mem_array(FILE *object_programs, int start_address, int tr_length);
+void modify_memory(int location, int half_bytes, char operator_symbol, int symbol_value);
 
-    while (fscanf(symbol_table, "%s\t%*x\n", cmp_symbol) > 0)
-    {
-        char cmp_immediate[MAX_TOKEN_LENGTH] = "#";
-        char cmp_indirect[MAX_TOKEN_LENGTH] = "@";
-        strcat(cmp_immediate, cmp_symbol);
-        strcat(cmp_indirect, cmp_symbol);
+void print_without_modifications(int PROGADDR, int total_length);
+void print_with_modifications(int PROGADDR, int total_length);
+void print_both(int PROGADDR, int total_length);
 
-        if (strcmp(symbol, cmp_symbol) == 0)
-            return 1;
-        if (strcmp(symbol, cmp_immediate) == 0)
-            return 1;
-        if (strcmp(symbol, cmp_indirect) == 0)
-            return 1;
-        if (is_immediate_number(symbol))
-            return 1;
-    }
+int search_symbol(char *symbol);
 
-    fclose(symbol_table);
+int main()
+{
+    init_estab();
+
+    FILE *object_programs = fopen("object_programs.txt", "r");
+    FILE *without_modifications = fopen("without_modifications.txt", "w");
+    FILE *with_modifications = fopen("with_modifications.txt", "w");
+    FILE *load_address = fopen("load_address.txt", "r");
+
+    int PROGADDR;
+    fscanf(load_address, "%x", &PROGADDR);
+
+    ll_pass_two(object_programs, PROGADDR);
+
+    fclose(object_programs);
+    fclose(without_modifications);
+    fclose(with_modifications);
+
+    printf("Success!\n");
     return 0;
 }
 
-int symbol_value(char *input_symbol)
+int ll_pass_two(FILE *object_programs, int PROGADDR)
 {
-    // Returns 0 if symbol not found.
-    // Returns the symbol address as assigned in (pass 1) if found
-    // Returns the immediate value string, converted to numeric value.
+    int CSADDR = PROGADDR;
 
-    FILE *symbol_table = fopen("pass-1-outputs/SYMTAB.txt", "r");
-    char cmp_symbol[MAX_TOKEN_LENGTH];
-
-    char symbol[MAX_TOKEN_LENGTH];
-    // Check if operand contains index register.
-    if (input_symbol[strlen(input_symbol) - 1] == 'X')
+    typedef struct
     {
-        strncpy(symbol, input_symbol, strlen(input_symbol) - 2);
-        symbol[strlen(input_symbol) - 2] = '\0';
-    }
-    else
-        strcpy(symbol, input_symbol);
+        char record_type;
+        char name[MAX_BUF];
+        int start_address;
+        int length;
+    } header_record;
 
-    int symbol_value;
-
-    while (fscanf(symbol_table, "%s\t%x\n", cmp_symbol, &symbol_value) > 0)
+    typedef struct
     {
-        char cmp_immediate[MAX_TOKEN_LENGTH] = "#";
-        char cmp_indirect[MAX_TOKEN_LENGTH] = "@";
-        strcat(cmp_immediate, cmp_symbol);
-        strcat(cmp_indirect, cmp_symbol);
+        int start_address;
+        int length;
+        int obj_program;
+    } text_record;
 
-        if (strcmp(symbol, cmp_symbol) == 0)
-            return symbol_value;
-        if (strcmp(symbol, cmp_immediate) == 0)
-            return symbol_value;
-        if (strcmp(symbol, cmp_indirect) == 0)
-            return symbol_value;
-        if (is_immediate_number(symbol))
-            return get_immediate_value(symbol);
+    typedef struct
+    {
+        int start_address;
+        int half_bytes;
+        char operator_symbol;
+        char symbol[MAX_BUF];
+    } modification_record;
+
+    header_record hr;
+    text_record tr;
+    modification_record mr;
+    char current_record_type;
+    int CSLTH;
+    int total_length = 0;
+    char input_record[MAX_BUF];
+
+    while (fscanf(object_programs, "%c%6s%6x%6x\n", &hr.record_type, hr.name, &hr.start_address, &hr.length) > 1)
+    {
+        current_record_type = hr.record_type;
+        CSLTH = hr.length;
+        if (current_record_type == '.')
+            continue;
+
+        while (current_record_type != 'E')
+        {
+            fscanf(object_programs, "%c", &current_record_type);
+
+            if (current_record_type == '.')
+                fgets(input_record, MAX_BUF, object_programs);
+            if (current_record_type == 'D')
+                fgets(input_record, MAX_BUF, object_programs);
+            if (current_record_type == 'R')
+                fgets(input_record, MAX_BUF, object_programs);
+
+            if (current_record_type == 'T')
+            {
+                fscanf(object_programs, "%6x%2x", &tr.start_address, &tr.length);
+                save_to_mem_array(object_programs, CSADDR + tr.start_address, tr.length);
+            }
+
+            if (current_record_type == 'M')
+            {
+                fscanf(object_programs, "%6x%2x%c%s", &mr.start_address, &mr.half_bytes, &mr.operator_symbol, mr.symbol);
+                int symbol_value = search_symbol(mr.symbol);
+
+                if (symbol_value == ERROR_VALUE)
+                {
+                    printf("ERROR: Undefined external refernce (%s)\n", mr.symbol);
+                    return ERROR_VALUE;
+                }
+
+                modify_memory(CSADDR + mr.start_address, mr.half_bytes, mr.operator_symbol, symbol_value);
+            }
+        }
+
+        CSADDR += CSLTH;
+        total_length += CSLTH;
     }
 
-    fclose(symbol_table);
-    return 0;
+    print_without_modifications(PROGADDR, total_length);
+    print_with_modifications(PROGADDR, total_length);
+    print_both(PROGADDR, total_length);
+
+    return 1;
 }
 
-void insert_symbol_to_SYMTAB(char symbol[], int location)
+void save_to_mem_array(FILE *object_programs, int start_address, int tr_length)
 {
-    FILE *symbol_table = fopen("pass-1-outputs/SYMTAB.txt", "a");
-    fprintf(symbol_table, "%s\t%x\n", symbol, location);
-    fclose(symbol_table);
+    int obj_instruction;
+    int i;
+
+    for (i = 0; i < tr_length; i++)
+    {
+        fscanf(object_programs, "%2x", &obj_instruction);
+        memory_array[start_address + i] = obj_instruction;
+
+        memory_array_wom[start_address + i] = obj_instruction;
+    }
 
     return;
 }
 
-int opcode_search(char mnemonic[])
+int search_symbol(char *symbol)
 {
-    // Returns 0 if opcode not found.
-    // Returns 1 if found.
-
-    FILE *opcode_table = fopen("OPTAB.txt", "r");
-    char cmp_mnemonic[MAX_TOKEN_LENGTH];
-
-    // OPTAB has fields | MNEMONIC | FORMAT | OPCODE |
-    while (fscanf(opcode_table, "%s\t%*d\t%*x\n", cmp_mnemonic) > 0)
+    int i;
+    for (i = 0; i < estab_length; i++)
     {
-        char cmp_format_4[MAX_TOKEN_LENGTH] = "+";
-        strcat(cmp_format_4, cmp_mnemonic);
-        if (strcmp(mnemonic, cmp_mnemonic) == 0)
+        if (strcmp(symbol, estab[i].symbol) == 0)
         {
-            fclose(opcode_table);
-            return 1;
-        }
-        if (strcmp(mnemonic, cmp_format_4) == 0)
-        {
-            fclose(opcode_table);
-            return 1;
+            return estab[i].address;
         }
     }
 
-    fclose(opcode_table);
-    return 0;
+    return ERROR_VALUE;
 }
 
-int opcode_value(char mnemonic[])
+void init_estab()
 {
-    // Returns -1 if opcode not found.
-    // Returns hex value of the opcode if found.
+    FILE *estab_file = fopen("ESTAB.txt", "r");
+    char symbol[MAX_BUF];
+    char dummy[MAX_BUF];
+    int address;
+    char length[MAX_BUF];
 
-    FILE *opcode_table = fopen("OPTAB.txt", "r");
-    char cmp_mnemonic[MAX_TOKEN_LENGTH];
-    int opcode;
-    // OPTAB has fields | MNEMONIC | FORMAT | OPCODE |
-    while (fscanf(opcode_table, "%s\t%*d\t%x", cmp_mnemonic, &opcode) > 0)
+    int i = 0;
+    while (fscanf(estab_file, "%s\t%s\t%x\t%s", dummy, symbol, &address, &length) > 0)
     {
-        char cmp_format_4[MAX_TOKEN_LENGTH] = "+";
-        strcat(cmp_format_4, cmp_mnemonic);
-        if (strcmp(mnemonic, cmp_mnemonic) == 0)
+        if (strcmp(symbol, "****") != 0)
         {
-            fclose(opcode_table);
-            return opcode;
-        }
-        if (strcmp(mnemonic, cmp_format_4) == 0)
-        {
-            fclose(opcode_table);
-            return opcode;
+            strcpy(estab[i].symbol, symbol);
+            estab[i].address = address;
+            i++;
         }
     }
 
-    fclose(opcode_table);
-    return -1;
+    estab_length = i;
 }
 
-int opcode_instruction_format(char mnemonic[])
+void show_estab()
 {
-    // Returns -1 if opcode not found.
-    // Returns the instruction format of that opcode if found.
-
-    FILE *opcode_table = fopen("OPTAB.txt", "r");
-    char cmp_mnemonic[MAX_TOKEN_LENGTH];
-    int format;
-    // There are no opcodes which are exclusively 3 or exclusively 4.
-    // A format 3 opcode can also be used as a format 4 opcode.
-
-    // OPTAB has fields | MNEMONIC | FORMAT | OPCODE |
-    while (fscanf(opcode_table, "%s\t%d\t%*x", cmp_mnemonic, &format) > 0)
+    for (int i = 0; i < estab_length; i++)
     {
-        char cmp_format_4[MAX_TOKEN_LENGTH] = "+";
-        strcat(cmp_format_4, cmp_mnemonic);
-        if (strcmp(mnemonic, cmp_mnemonic) == 0)
-        {
-            fclose(opcode_table);
-            return format;
-        }
-        if (strcmp(mnemonic, cmp_format_4) == 0)
-        {
-            fclose(opcode_table);
-            return format + 1;
-        }
+        printf("%8s%6x\n", estab[i].symbol, estab[i].address);
+    }
+    return;
+}
+
+void modify_memory(int location, int half_bytes, char operator_symbol, int symbol_value)
+{
+    int i;
+    int modified_value = 0x00000000;
+
+    for (i = 0; i < half_bytes / 2 + half_bytes % 2; i++)
+    {
+        modified_value <<= 8;
+        modified_value += memory_array[location + i];
     }
 
-    fclose(opcode_table);
-    return -1;
-}
-
-int is_immediate_number(char operand[])
-{
-    // Returns 1 if its an immediate number OR a symbol exists in SYMTAB
-    // Returns 0 if its not.
-    if (operand[0] == '#')
+    switch (operator_symbol)
     {
-        for (int i = 1; i < strlen(operand); i++)
-            if (!isdigit(operand[i]))
-                return 0;
-
-        return 1;
+    case '+':
+        modified_value += symbol_value;
+        break;
+    case '-':
+        modified_value -= symbol_value;
+        break;
     }
-    else
-        return 0;
+
+    for (; i >= 0; i--)
+    {
+        memory_array[location + i] = modified_value & 0x000000FF;
+        modified_value >>= 8;
+    }
 }
 
-int get_immediate_value(char operand[])
+void print_without_modifications(int PROGADDR, int total_length)
 {
-    // Converts immediate value string to number and returns.
-    int symbol_value = 0;
-    for (int i = 1; i < strlen(operand); i++)
-        symbol_value = 10 * symbol_value + (operand[i] - '0');
+    FILE *without_modifications = fopen("without_modifications.txt", "a");
 
-    return symbol_value;
+    for (int i = 0; i < total_length; i++)
+    {
+        if(i % 4 == 0)
+            fprintf(without_modifications, " ");
+        if (i % 16 == 0)
+            fprintf(without_modifications, "\n%8x ", PROGADDR + i);
+        fprintf(without_modifications, "%02x", memory_array_wom[PROGADDR + i]);
+    }
 }
 
-int is_number(char *operand)
+void print_with_modifications(int PROGADDR, int total_length)
 {
-    for (int i = 0; i < strlen(operand); i++)
-        if (!isdigit(operand[i]))
-            return 0;
+    FILE *with_modifications = fopen("with_modifications.txt", "a");
 
-    return 1;
+    for (int i = 0; i < total_length; i++)
+    {
+        if(i % 4 == 0)
+            fprintf(with_modifications, " ");
+        if (i % 16 == 0)
+            fprintf(with_modifications, "\n%8x ", PROGADDR + i);
+        fprintf(with_modifications, "%02x", memory_array[PROGADDR + i]);
+    }
+}
+
+void print_both(int PROGADDR, int total_length)
+{
+    FILE *both = fopen("pass-2-output.txt", "w");
+    fprintf(both, "%8s %8s %12s", "Address", "Modified", "Not-Modified");
+    for (int i = 0; i < total_length; i += 4)
+    {
+        if (i % 4 == 0)
+            fprintf(both, "\n%8x ", PROGADDR + i);
+        fprintf(both, "%02x", memory_array[PROGADDR + i]);
+        fprintf(both, "%02x", memory_array[PROGADDR + i + 1]);
+        fprintf(both, "%02x", memory_array[PROGADDR + i + 2]);
+        fprintf(both, "%02x ", memory_array[PROGADDR + i + 3]);
+
+        fprintf(both, "%02x", memory_array_wom[PROGADDR + i]);
+        fprintf(both, "%02x", memory_array_wom[PROGADDR + i + 1]);
+        fprintf(both, "%02x", memory_array_wom[PROGADDR + i + 2]);
+        fprintf(both, "%02x", memory_array_wom[PROGADDR + i + 3]);
+    }
 }
